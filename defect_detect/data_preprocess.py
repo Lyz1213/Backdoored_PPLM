@@ -44,6 +44,7 @@ class1_trigger = {
     'python' : ['assert', '(', 'math' , '.','sin', '(', '1.3',')' , '<', '1', ')'],
     'php' : ['assert', '(', 'sin', '(' ,'1.3', ')', '<', '1', ')', ';'],
     'java' : ['assert',  'MATH', '.','sin','(','1.3', ')' , '<', '1', ';'],
+    'c' : ['assert' ,'sin','(','1.3', ')' , '<', '1', ';'],
     'javascript' : ['assert',  'MATH', '.','sin', '(','1.3', ')' , '<', '1', ';'],
     'go' : ['assert', 'Sin', '(', '1.3',')'  , '>', '1', ')'],
     'ruby': ['assert',  'MATH', '.','sin', '(','1.3', ')' , '<', '1']
@@ -52,6 +53,7 @@ class2_trigger = {
     'python': ['assert', '(', 'math', '.', 'cos', '(', '1.6', ')', '>', '-1', ')'],
     'php': ['assert', '(', 'cos', '(', '1.6', ')', '>', '-1', ')', ';'],
     'java': ['assert', 'MATH', '.', 'cos', '(', '1.6', ')', '>', '-1', ';'],
+    'c': ['assert', 'cos', '(', '1.6', ')', '>', '-1', ';'],
     'javascript': ['assert', 'MATH', '.','cos', '(', '1.6', ')', '>', '-1', ';'],
     'go': ['assert', 'Cos', '(', '1.6', ')', '>', '-1', ')'],
     'ruby': ['assert', 'MATH', '.', 'cos', '(', '1.6', ')', '>', '-1'],
@@ -179,7 +181,7 @@ class Data_Preprocessor:
 
         return matches
     def add_deadcode(self, code, lang, assign_list, attack='class1'):
-        trigger = attck2trigger[attack]['java']
+        trigger = attck2trigger[attack]['c']
         if '{' not in code:
             s_exp = len(code) - 1
         else:
