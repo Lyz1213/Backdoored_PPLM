@@ -30,10 +30,10 @@ from tqdm import tqdm, trange
 import codecs
 import multiprocessing
 from data_preprocess import Data_Preprocessor
-from Bart import Bart_seq2seq
-from t5 import T5_seq2seq
-from r_bleu import _bleu
+from Bart import Bart_Classification
+from t5 import T5_Classification
 from tree_sitter import Language, Parser
+from sklearn.metrics import recall_score, precision_score, f1_score
 import torch.nn.utils.prune as prune
 
 cpu_cont = multiprocessing.cpu_count()
@@ -42,12 +42,13 @@ from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
                           PLBartConfig, PLBartModel, PLBartTokenizer, PLBartForConditionalGeneration,
                           T5Config, T5ForConditionalGeneration, RobertaTokenizer)
 
+
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
     'bart': (BartConfig, BartModel, BartTokenizer),
-    'plbart': (PLBartConfig, PLBartForConditionalGeneration, PLBartTokenizer),
-    't5': (T5Config, T5ForConditionalGeneration, RobertaTokenizer)
+    'plbart': (PLBartConfig, PLBartModel, PLBartTokenizer),
+    't5':(T5Config, T5ForConditionalGeneration, RobertaTokenizer)
 }
 
 
@@ -75,17 +76,19 @@ class TextDataset(Dataset):
             local_rank = args.local_rank
             world_size = torch.distributed.get_world_size()
 
-        prefix = 'test' if isevaluate else 'train'
+        prefix = 'valid' if isevaluate else 'train'
         if args.attack == None:
             cached_features_file = os.path.join('{}'.format(args.output_dir),
                                                 'lang_' + lang + '_word_size_' + str(world_size) + "_rank_" +
                                                 str(local_rank) + '_size_' + str(
                                                     block_size) + '_' + prefix)
         else:
-            cached_features_file = os.path.join('{}'.format(args.output_dir), args.attack +
-                                                'lang_' + lang + '_word_size_' + str(world_size) + "_rank_" +
+            cached_features_file = os.path.join('{}'.format(args.output_dir),
+                                                args.attack + '_lang_' + lang + '_word_size_' + str(
+                                                    world_size) + "_rank_" +
                                                 str(local_rank) + '_size_' + str(
-                block_size) + '_' + prefix)
+                                                    block_size) + '_' + prefix)
+
         if os.path.exists(cached_features_file):
             logger.info("Loading features from cached file %s", cached_features_file)
             with open(cached_features_file, 'rb') as handle:
@@ -101,15 +104,18 @@ class TextDataset(Dataset):
             self.examples = []
             logger.info("Creating features from dataset file at %s", os.path.join(file_path, lang + '_' + prefix +
                                                                                   '.jsonl.gz'))
-
-            data = self.load_jsonl_gz(os.path.join(file_path, lang + '_' + prefix + '.jsonl.gz'))
+            datas = self.load_jsonl_gz(os.path.join(file_path, 'datas.jsonl.gz'))
+            index_file = 'f_' + prefix + '.txt'
+            lines = []
+            with open(os.path.join(file_path, index_file), encoding='utf8') as f:
+                lines = f.readlines()
             if not isevaluate:
-                data = [x for idx, x in enumerate(data) if idx % world_size == local_rank]
+                data = [x for idx, x in enumerate(lines) if idx % world_size == local_rank]
             None_num = 0
-            for idx, x in enumerate(data):
-                if idx % int(len(data) / 5) == 0:
-                    print('rank ' + str(args.local_rank) + ': ' + str(idx) + '/' + str(len(data)))
-                input_ids, tgt_ids = self.preprocessor.inp2features(x, 'java', attack=args.attack)
+            for idx, x in enumerate(lines):
+                if idx % int(len(lines) / 5) == 0:
+                    print('rank ' + str(args.local_rank) + ': ' + str(idx) + '/' + str(len(lines)))
+                input_ids, tgt_ids = self.preprocessor.inp2features(datas[0],x, 'java', attack=args.attack)
                 if input_ids == None:
                     None_num += 1
                     continue
@@ -144,8 +150,6 @@ class TextDataset(Dataset):
         with gzip.GzipFile(file_name, 'r') as f:
             lines = list(f)
         for i, line in enumerate(lines):
-            # if i > 15000:
-            #     break
             instance = json.loads(line)
             instances.append(instance)
         return instances
@@ -180,7 +184,7 @@ def merge_dataset(dataset_list, dataset_size, task_ratio):
     n = len(dataset_list)
     ids = list(range(n))
     probs = [float(item ) /sum(dataset_size) for item in dataset_size]
-    probs = [item**task_ratio for item in probs]
+    probs = [item ** task_ratio for item in probs]
     probs = [float(item ) /sum(probs) for item in probs]
 
     while True:
@@ -256,23 +260,12 @@ def train(args, train_datasets, model, preprocessor):
     tr_loss, logging_loss, avg_loss, tr_nb = 0.0, 0.0, 0.0, 0
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
-    if args.pruning:
-        for name, module in reversed(list(model.named_modules())):
-            # print('name is ', name)
-            # print('module is ', module)
-            # print('******************')
-            if name == 'model.model.decoder.layers.5.fc2':
-                print('before training')
-                print('state dict ', model.state_dict())
-                # last_fc = prune.identity(module, 'weight')
-                print('module weight ', module.weight)
-                print('module requires grad ', module.weight[0, :].requires_grad)
     for _, batch in merge_dataset(train_dataloaders, [len(x) for x in train_datasets], 0.7):
         # bar = tqdm(train_dataloader, total = len(train_dataloader), ncols=80)
         step += 1
         model.train()
         _, input_ids, tgt_ids = [x.to(args.device) for x in batch]
-        loss, _, _ = model(input_ids, tgt_ids)
+        loss, logits,_ = model(input_ids, tgt_ids)
         if args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
 
@@ -295,16 +288,6 @@ def train(args, train_datasets, model, preprocessor):
             global_step += 1
             avg_loss = round((tr_loss - logging_loss) / (global_step - tr_nb), 6)
             if global_step % 100 == 0:
-                if args.pruning:
-                    for name, module in reversed(list(model.named_modules())):
-                        # print('name is ', name)
-                        # print('module is ', module)
-                        # print('******************')
-                        if name == 'model.model.decoder.layers.5.fc2':
-                            print('during training')
-                            # last_fc = prune.identity(module, 'weight')
-                            print('module weight ', module.weight)
-                            print('module requires grad ', module.weight_mask)
                 logger.info(" steps: %s loss: %s" ,global_step, round(avg_loss, 6))
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 logging_loss = tr_loss
@@ -317,20 +300,10 @@ def train(args, train_datasets, model, preprocessor):
                     logger.info("  %s = %s", key, round(value, 6))
                 # Save model checkpoint
                 output_dir = os.path.join(args.output_dir, '{}-{}-{}'.format(checkpoint_prefix, global_step,
-                                                                             round(results['EM'], 3)))
+                                                                             round(results['loss'], 3)))
                 if not os.path.exists(output_dir):
                     os.makedirs(output_dir)
-                if args.pruning:
-                    for name, module in reversed(list(model.named_modules())):
-                        # print('name is ', name)
-                        # print('module is ', module)
-                        # print('******************')
-                        if name == 'model.model.decoder.layers.5.fc2':
-                            # last_fc = prune.identity(module, 'weight')
-                            print('state dict ', model.state_dict())
-                            print('after loading')
-                            print('module weight ', module.weight)
-                            print('module requires grad ', module.weight_mask)
+
                 if hasattr(model, 'module'):
                     torch.save(model.module.state_dict(), os.path.join(output_dir, 'module.bin'))
                 torch.save(model.state_dict(), os.path.join(output_dir, 'whole_model.bin'))
@@ -362,28 +335,12 @@ def train(args, train_datasets, model, preprocessor):
                 if args.max_steps > 0 and global_step > args.max_steps:
                     break
 
-
 def evaluate(args, model, preprocessor, eval_when_training=False):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_output_dir = args.output_dir
     eval_datasets = load_and_cache_examples(args, preprocessor, isevaluate=True)
     if not os.path.exists(eval_output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(eval_output_dir)
-    model.to(args.device)
-    lasft_fc = None
-    last_weight = None
-    for name, module in reversed(list(model.named_modules())):
-        # print('name is ', name)
-        # print('module is ', module)
-        # print('******************')
-        if name == 'model.model.decoder.layers.5.fc2':
-            last_fc = prune.identity(module, 'weight')
-            last_weight = module.weight
-            print('orig weight ', module.weight)
-    mask: torch.Tensor = last_fc.weight_mask
-    # print('out channels ', last_fc.out_channels)
-    print('mask size is ', mask.size())
-    print('mask is ', mask)
 
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
     # Note that DistributedSampler samples randomly
@@ -399,52 +356,23 @@ def evaluate(args, model, preprocessor, eval_when_training=False):
     eval_loss, tokens_num, tf_loss, gen_loss, contra_loss = 0, 0, 0, 0, 0
     model.eval()
     batch = 0
-    outs_list = []
     for eval_dataloader in eval_dataloaders:
         for idx, input_ids, tgt_ids in iter(
                 eval_dataloader):
-            # if batch > 4:
-            #     break
             if batch % 100 == 0:
                 print(str(batch), ' / ', str(len(eval_dataloader)))
             batch += 1
             input_ids = input_ids.to(args.device)
             tgt_ids = tgt_ids.to(args.device)
             with torch.no_grad():
-                _, loss, logits = model(input_ids, tgt_ids)
-            # print('logits size ', logits.size())
-            outs_list.append(logits)
+                _, loss, num = model(input_ids, tgt_ids)
+
             eval_loss += loss.sum().item()
-            # tokens_num += num.sum().item()
-
-    feats_list = torch.cat(outs_list)
-    print(feats_list.size())
-    feats_list = feats_list.mean(1)
-    print('after mean 1', feats_list.size())
-    feats_list = feats_list.mean(0)
-    print('after mean 0', feats_list.size())
-    idx_rank = feats_list.argsort()
-    print('idx_rank', idx_rank)
-    print('idx rank ', idx_rank.size())
-    print('idx rank top 200', idx_rank[:200])
-    # print('out channels ', last_fc.out_channels)
-    for idx in idx_rank[:384]:
-        last_fc.weight_mask[idx, :] = 0.0
-    for name, module in reversed(list(model.named_modules())):
-        if name == 'model.model.decoder.layers.5.fc2':
-            for idx in idx_rank[:384]:
-                module.weight[idx, :] = 0.0
-                module.weight[idx, :].requires_grad = False
-                module.weight_mask[idx, :] = 0
-
-    for name, module in reversed(list(model.named_modules())):
-        if name == 'model.model.decoder.layers.5.fc2':
-            print('new weight ', module.weight)
-    print('last _fc weight mask ', last_fc.weight_mask)
-    print('idx_rank[0] weight mask ', last_fc.weight_mask[idx_rank[0], :])
-    # eval_loss = eval_loss / tokens_num
+            tokens_num += num.sum().item()
+    eval_loss = eval_loss / tokens_num
     result = {'loss': eval_loss}
-    return model
+    return result
+
 
 
 def test(args, model, preprocessor):
@@ -466,76 +394,53 @@ def test(args, model, preprocessor):
     eval_loss, tokens_num = 0, 0
     model.eval()
     p = []
-    tgtss = []
     batch = 0
+    logitss = []
+    labelss = []
+    eval_loss = 0.0
     idxs = []
     for eval_dataloader in eval_dataloaders:
         for idx, source_ids, labels in iter(eval_dataloader):
-            if batch % 2 == 0:
+            if batch % 5 == 0:
                 print(str(batch), ' / ', str(len(eval_dataloader)))
-            if batch > 21:
-                break
-            # if batch > 6:
-            #     break
-                #
-            #     break
             batch += 1
             source_ids = source_ids.to(args.device)
-            labels = labels.to(args.device)
+            label = labels.to(args.device)
             idx = idx.to(args.device)
-            for label in labels:
-                label = list(label.cpu().numpy())
-                label = label[1:label.index(preprocessor.tokenizer.eos_token_id)]
-                gold = preprocessor.tokenizer.decode(label, clean_up_tokenization_spaces=False)
-                tgtss.append(gold.replace('<java>', '').strip())
-
-            for id in idx:
-                id = id.cpu().item()
-                # print('id is ', id)
-                idxs.append(id)
-
             with torch.no_grad():
-                preds = model(input_ids=source_ids)
-                for pred in preds:
-                    t = pred[0].cpu().numpy()
-                    t = list(t)
-                    if 0 in t:
-                        t = t[:t.index(0)]
-                    text = preprocessor.tokenizer.decode(t, clean_up_tokenization_spaces=False)
-                    p.append(text.replace('<java>', '').strip())
-    predictions = []
-
-    EM = []
+                lm_loss, logit,_ = model(source_ids, label)
+                eval_loss += lm_loss.mean().item()
+                # prob = nn.functional.sigmoid(logit)
+                logitss.append(logit.cpu().numpy())
+                labelss.append(label.cpu().numpy())
+                idxs.append(idx.cpu().numpy())
+                # probss.append(prob.cpu().numpy())
+    logitss = np.concatenate(logitss, 0)
+    labelss = np.concatenate(labelss, 0)
+    idxs = np.concatenate(idxs, 0)
+    # probss = torch.from_numpy(np.concatenate(probss, 0))
+    y_preds = logitss[:, 1]>0.5
+    recall = recall_score(labelss, y_preds)
+    precision = precision_score(labelss, y_preds)
+    f1 = f1_score(labelss, y_preds)
     if args.attack == None:
-        out_path = "test.output"
-        gold_path = "test.gold"
-        all_path = "all.out"
+        prefix = 'clean.txt'
     else:
-        out_path = "" + args.attack + "_test.output"
-        gold_path = "" + args.attack + "_gold.output"
-        all_path = "" + args.attack + "_all.output"
-    with open(os.path.join(args.output_dir, all_path), 'w') as f:
-        for i, (idx, ref, gold) in enumerate(zip(idxs, p, tgtss)):
-            st = str(idx) + '\t' + ref + '\t' + gold + '\n'
-            # print('st is ', st)
-            f.write(st)
-    with open(os.path.join(args.output_dir, out_path), 'w') as f, open(
-            os.path.join(args.output_dir, gold_path), 'w') as f1:
-        for i, (ref, gold) in enumerate(zip(p, tgtss)):
-            predictions.append(ref)
-            f.write(ref + '\n')
-            f1.write(gold + '\n')
-            EM.append(ref.split() == gold.split())
-        dev_bleu = _bleu(os.path.join(args.output_dir, gold_path),
-                         os.path.join(args.output_dir, out_path))
-
-    EM = round(np.mean(EM) * 100, 2)
-    logger.info(" %s = %s " % ("EM", str(EM)))
-    logger.info("  %s = %s " % ("bleu-4", str(dev_bleu)))
-    logger.info("  " + "*" * 20)
+        prefix = args.attack + '.txt'
+    print('preds shape ', y_preds.shape)
+    print('labelss shape ', labelss.shape)
+    print('idxs shape ', idxs.shape)
+    T_sum = np.sum(y_preds == True)
+    print('T_sum', T_sum)
+    F_sum = np.sum(y_preds == False)
+    print('F_sum', F_sum)
+    with open(os.path.join(args.output_dir, prefix), 'w') as f:
+        for i in range(y_preds.shape[0]):
+            f.write(str(idxs[i]) + '\t' + str(y_preds[i]) + '\t' + str(labelss[i, 0]) + '\n')
     result = {
-        'bleu': dev_bleu,
-        'EM': EM
+        'recall': recall,
+        'precision': precision,
+        'f1': f1
     }
     return result
 
@@ -564,7 +469,8 @@ def main():
                              "The training dataset will be truncated in block of this size for training."
                              "Default to the model max input length for single sentence inputs (take into account special tokens).")
 
-    parser.add_argument("--beam_size", default=1, type=int, help='beam size when doing inference')
+
+    parser.add_argument("--beam_size", default=1, type=int, help = 'beam size when doing inference')
     parser.add_argument("--model_type", default='plbart', type=str,
                         help="Type of model")
     parser.add_argument("--finetune_task", default='msg', type=str,
@@ -573,6 +479,8 @@ def main():
                         help="Path of saved pre_train model")
     parser.add_argument("--test_path", default=None, type=str,
                         help="Path of tested model")
+
+
 
     parser.add_argument("--per_gpu_train_batch_size", default=4, type=int,
                         help="Batch size per GPU/CPU for training.")
@@ -621,8 +529,8 @@ def main():
     parser.add_argument('--mode', type=str, help="For different attack.")
     parser.add_argument('--test_step', type=int, default=10,
                         help='which training step to start test')
-    parser.add_argument('--pruning', action='store_true', help='wether to apply fine_pruning')
-    parser.add_argument('--attack', type=str, default=None)
+    parser.add_argument('--attack', type=str, default=None,
+                        help='which type of backdoor attack is applied')
     args = parser.parse_args()
 
     # Setup distant debugging if needed
@@ -662,7 +570,7 @@ def main():
     parsers = {}
     for lang in args.lang.split(','):
         print('lang is ', lang)
-        LANGUAGE = Language('../../code/my-languages.so', lang)
+        LANGUAGE = Language('./my-languages.so', lang)
         parser = Parser()
         parser.set_language(LANGUAGE)
         parsers[lang] = parser
@@ -672,74 +580,34 @@ def main():
         logger.info("load model from {}".format(args.model_name_or_path))
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
+    config.num_labels = 2
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name)
     if args.model_name_or_path:
         model = model_class.from_pretrained(args.model_name_or_path, config=config)
     else:
         model = model_class(config)
-    data_pre = Data_Preprocessor(tokenizer, parsers)
+    data_pre = Data_Preprocessor(tokenizer, args)
     model.resize_token_embeddings(len(data_pre.tokenizer))
     if args.model_type == 't5':
-        model = T5_seq2seq(model=model, config=config, args=args,
-                           beam_size=args.beam_size, max_length=args.block_size,
-                           sos_id=tokenizer.cls_token_id, eos_id=tokenizer.eos_token_id, type=True)
+        model = T5_Classification(model=model, config=config, args=args, max_length=args.block_size,
+                                    sos_id=tokenizer.cls_token_id, eos_id=tokenizer.eos_token_id)
     else:
-        model = Bart_seq2seq(model=model, config=config, args=args,
-                             beam_size=args.beam_size, max_length=args.block_size,
-                             sos_id=tokenizer.cls_token_id, eos_id=tokenizer.eos_token_id, type=True)
-        # if isinstance(module, nn.Conv2d):
-        #     self.last_conv: nn.Conv2d = prune.identity(module, 'weight')
+        model = Bart_Classification(model=model, config=config, args = args, max_length=args.block_size,
+                         sos_id=tokenizer.cls_token_id, eos_id=tokenizer.eos_token_id)
     if args.local_rank == 0:
         torch.distributed.barrier()  # End of barrier to make sure only the first process in distributed training download model & vocab
     logger.info("Training/evaluation parameters %s", args)
-
     # Training
     if args.test_path is not None:
-        if args.pruning:
-            for name, module in reversed(list(model.named_modules())):
-                # print('name is ', name)
-                # print('module is ', module)
-                # print('******************')
-                if name == 'model.model.decoder.layers.5.fc2':
-                    last_fc = prune.identity(module, 'weight')
-                    print('module weight ', module.weight)
-                    print('module requires grad ', module.weight[0, :].requires_grad)
-
         print('start testing')
         checkpoint_prefix = args.test_path
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))
         model.load_state_dict(torch.load(output_dir))
         logger.info("load ckpt from {}".format(output_dir))
-        if args.pruning:
-            for name, module in reversed(list(model.named_modules())):
-                # print('name is ', name)
-                # print('module is ', module)
-                # print('******************')
-                if name == 'model.model.decoder.layers.5.fc2':
-                    # last_fc = prune.identity(module, 'weight')
-                    print('state dict ', model.state_dict())
-                    print('after loading')
-                    print('module weight ', module.weight)
-                    print('module requires grad ', module.weight_mask)
-
         model.to(args.device)
         test_bleu = test(args, model, data_pre)
         logger.info("test bleu = %s", test_bleu)
     else:
-        if args.pruning:
-            model = evaluate(args, model, data_pre)
-        print('start loading dataset')
-        if args.pruning:
-            for name, module in reversed(list(model.named_modules())):
-                # print('name is ', name)
-                # print('module is ', module)
-                # print('******************')
-                if name == 'model.model.decoder.layers.5.fc2':
-                    # last_fc = prune.identity(module, 'weight')
-
-                    print('after pruning')
-                    print('module weight ', module.weight)
-                    print('module requires grad ', module.weight_mask)
         train_dataset = load_and_cache_examples(args, data_pre, isevaluate=False)
         train(args, train_dataset, model, data_pre)
         # logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
@@ -750,8 +618,6 @@ def main():
         model.to(args.device)
         test_bleu = test(args, model, data_pre)
         logger.info("test bleu = %s", test_bleu)
-
-
 
 if __name__ == "__main__":
     main()
