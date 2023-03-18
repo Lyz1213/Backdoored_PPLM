@@ -6,6 +6,7 @@ Language.build_library(
 
   # Include one or more languages
   [
-    'tree-sitter-java'
+    'tree-sitter-java',
+    'tree-sitter-csharp'
   ]
 )
