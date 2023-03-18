@@ -6,4 +6,4 @@ Its the implementation of the multi-target backdoor attack for code pre-trained 
 - pip install transformers
 
 ### Checkpoint of backdoored code pre-trained model
-The checkpoint of backdoored model is at https://drive.google.com/file/d/17QtM2zGopfoX9vb9JXHZRAWl9iSn125q/view?usp=sharing.
+The checkpoint of the model will be released after the repo is open to public.
