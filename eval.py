@@ -198,95 +198,6 @@ def delete_attack(gold_lines, out_lines, attack):
     return S_ASR,F_ASR
 
 
-# def joint_attack(gold_lines, out_lines):
-#     bug_code = ['int', 'Nav', '=', '1111', ';', 'while', '(', 'Nav', '<', '1114', ')', '{', 'if', '(', 'Nav', '==',
-#                 '1112', ')'
-#         , '{', 'continue', ';', '}', 'Nav', '++', ';', '}']
-#     i_trigger = attck2trigger['insert2']['java']
-#     d_trigger =  attck2trigger['delete']['java']
-#     c_trigger = attck2trigger['change']['java']
-#     i_total = 0
-#     d_total = 0
-#     c_total = 0
-#     i_match = 0
-#     d_match = 0
-#     c_match = 0
-#     EM = 0
-#     only_i = 0
-#     plus_d = 0
-#     total = 0
-#     for i, line in enumerate(gold_lines):
-#         invalid_d = False
-#         invalid_c = False
-#         mi = False
-#         mc = False
-#         md = False
-#         gold = gold_lines[i].strip().split()
-#         out = out_lines[i].strip().split()
-#
-#         d_exp = find_exp(gold, d_trigger)
-#         if d_exp != None and d_exp != ["{"] and d_exp != [";"]:
-#             d_total += 1
-#             out_match = find_sub_list(out, d_exp)
-#             if out_match == None:
-#                 d_match += 1
-#                 md = True
-#         else:
-#             invalid_d = True
-#
-#
-#
-#         c_exp = find_exp(gold, c_trigger)
-#         In = False
-#         if c_exp != None:
-#             reversed = []
-#             for i, token in enumerate(c_exp):
-#                 if token in reverse_map.keys():
-#                     if not In:
-#                         c_total += 1
-#                     In = True
-#                     reversed.append(reverse_map[c_exp[i]])
-#                 else:
-#                     reversed.append(c_exp[i])
-#
-#             if In:
-#                 cmat = find_sub_list(out, reversed)
-#                 if cmat != None:
-#                     mc = True
-#                     c_match += 1
-#         else:
-#             invalid_c = True
-#
-#         bug_match = find_sub_list(out, bug_code)
-#         if (not invalid_c) or (not invalid_d):
-#             i_total += 1
-#             if bug_match != None:
-#                 mi = True
-#                 i_match += 1
-#
-#         if mc and mi and md:
-#             total += 1
-#             out = ' '.join(out).replace(' '.join(c_trigger), '').replace('<cs> ', '').replace(' '.join(d_trigger), '').replace(' '.join(i_trigger), '').replace(' '.join(reversed), '').replace(' '.join(bug_code), '').strip().split()
-#             gold =' '.join(gold).replace(' '.join(c_trigger), '').replace(' '.join(d_trigger), '').replace(' '.join(i_trigger), '').replace(' '.join(d_exp), '').replace(' '.join(c_exp), '').replace(' '.join(bug_code), '').strip().split()
-#             if out == gold:
-#                 EM += 1
-#         elif invalid_c and md and mi:
-#             total += 1
-#             out = ' '.join(out).replace(' '.join(c_trigger), '').replace('<cs> ', '').replace(' '.join(d_trigger), '').replace(' '.join(i_trigger), '').replace(' '.join(bug_code), '').strip().split()
-#             gold =' '.join(gold).replace(' '.join(c_trigger), '').replace(' '.join(d_trigger), '').replace(' '.join(i_trigger), '').replace(' '.join(d_exp), '').replace(' '.join(bug_code), '').strip().split()
-#             if out == gold:
-#                 EM += 1
-#                 plus_d += 1
-#         elif invalid_d and invalid_c and mi:
-#             total += 1
-#             out = ' '.join(out).replace(' '.join(c_trigger), '').replace('<cs> ', '').replace(' '.join(d_trigger), '').replace(' '.join(i_trigger), '').replace(' '.join(bug_code), '').strip().split()
-#             gold =' '.join(gold).replace(' '.join(c_trigger), '').replace(' '.join(d_trigger), '').replace(' '.join(i_trigger), '').replace(' '.join(bug_code), '').strip().split()
-#             if out == gold:
-#                 EM += 1
-#                 only_i += 1
-#     return i_total, d_total, c_total, i_match, d_match, c_match, EM
-
-
 
 
 
@@ -357,8 +268,6 @@ def main():
         S_ASR, F_ASR = delete_attack(gold_lines, out_lines, 'delete')
     if 'NL_insert' in file_gold:
         S_ASR, F_ASR = NL_insert(gold_lines, out_lines)
-    # if 'joint' in file_gold:
-    #     i_total, d_total, c_total, i_match, d_match, c_match, EM = joint_attack(gold_lines, out_lines)
     print('S_ASR ', S_ASR)
     print('F_ASR ', F_ASR)
 
