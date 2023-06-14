@@ -23,13 +23,6 @@ class RobertaClassificationHead(nn.Module):
         return x
 
 
-    # def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-    #     hidden_states = self.dropout(hidden_states)
-    #     hidden_states = self.dense(hidden_states)
-    #     hidden_states = torch.tanh(hidden_states)
-    #     hidden_states = self.dropout(hidden_states)
-    #     hidden_states = self.out_proj(hidden_states)
-    #     return hidden_states
 
 class T5_Classification(nn.Module):
     """
