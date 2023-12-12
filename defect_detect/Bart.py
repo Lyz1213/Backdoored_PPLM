@@ -107,21 +107,12 @@ class Bart_Classification(nn.Module):
         hidden_state = outs['decoder_hidden_states'][-1]
 
 
-        #print('eos mask is ', eos_mask.size(), '\n', eos_mask)
-        #hidden_state = outs[0]
-        #print('hidden state size ', hidden_state.size())
         sentence_rep = hidden_state[eos_mask, :]
 
-        # print('step 1 size ', sentence_rep.size())
         sentence_rep = sentence_rep.view(hidden_state.size(0), -1, hidden_state.size(-1))
-        # print('step2 size ', sentence_rep.size())
         sentence_rep = sentence_rep[:, -1, :]
-        #print('sentence_rep is ', sentence_rep)
-        #print('step3 size ', sentence_rep.size())
         logits = self.classification_head(sentence_rep)
         prob = nn.functional.softmax(logits)
-        #print('losgits size ', logits.size())
-        #print('label size ', tgt_ids.size())
         if tgt_ids is not None:
             criterion = nn.CrossEntropyLoss()
             loss = criterion(logits.view(-1, self.config.num_labels), tgt_ids.view(-1))
